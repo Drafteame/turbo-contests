@@ -817,7 +817,7 @@ function NavbarImpl({
     label: string;
     icon: string | null;
   }> = [
-    { id: 'bets', label: 'Bets', icon: betsIcon },
+    { id: 'bets', label: 'Turbo', icon: betsIcon },
     { id: 'entradas', label: 'Mis entradas', icon: misEntradasIcon },
     { id: 'gaming', label: 'Gaming', icon: gamingIcon },
     { id: 'rewards', label: 'Rewards', icon: rewardsIcon },
