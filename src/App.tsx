@@ -9,6 +9,11 @@ import { ContestLeaderboard } from './ContestLeaderboard';
 import { ContestEntrySheet } from './ContestEntrySheet';
 import { CONTESTS, canConfirmContestEntry } from './contests';
 import {
+  contestScopeLabel,
+  isContestScoped,
+  picksForContest,
+} from './contestScope';
+import {
   entriesForContest,
   loadContestEntries,
   saveContestEntry,
@@ -128,12 +133,31 @@ export function App() {
   // BetSlipShell, which reference no reduced-motion flag at all for their
   // entry/exit motion). Only real prefers-reduced-motion simplifies it.
   const osReducedMotion = useReducedMotion();
-  const [selections, setSelections] = useState<Selection[]>([]);
+  // ONE DRAFT PER CONTEST — keyed by contest id, shared between that
+  // contest's feed card (inline player chips) and the full player-
+  // selection screen: both read/write the SAME entry in this map, so a
+  // pick made in either place is reflected in the other immediately, and
+  // navigating back and forth to a contest preserves its draft (nothing
+  // clears an entry except a successful entry or an explicit reset/remove).
+  // A contest's own picks never leak into another contest's draft, since
+  // each lives under its own key.
+  const [draftsByContest, setDraftsByContest] = useState<
+    Record<string, Selection[]>
+  >({});
+  const updateDraft = useCallback(
+    (contestId: string, updater: (current: Selection[]) => Selection[]) => {
+      setDraftsByContest((all) => ({
+        ...all,
+        [contestId]: updater(all[contestId] ?? []),
+      }));
+    },
+    [],
+  );
   // CONTESTS FEED — the app's main screen. Opening a contest card sets
   // `activeContestId` and switches to the existing player-selection screen
   // (unchanged below); the header's back button (see HomeScreen's Header)
-  // returns to the feed. Selections are cleared on open since each contest
-  // has its own min/max selection rules — see CONTESTS in contests.ts.
+  // returns to the feed. The draft is NOT cleared on open — it's preserved
+  // per contest (see `draftsByContest` above).
   const [screen, setScreen] = useState<'feed' | 'contest' | 'leaderboard'>(
     'feed',
   );
@@ -142,9 +166,13 @@ export function App() {
     () => CONTESTS.find((c) => c.id === activeContestId) ?? null,
     [activeContestId],
   );
+  // The active contest's own draft — the single source of truth read by
+  // every selection-derived value below (cumulative odds, tier, the bet
+  // slip's selected ids, etc.), exactly as the old flat `selections` state
+  // used to be, just keyed by contest now.
+  const selections = activeContestId ? draftsByContest[activeContestId] ?? [] : [];
   const openContest = useCallback((id: string) => {
     setActiveContestId(id);
-    setSelections([]);
     setScreen('contest');
   }, []);
   const openLeaderboard = useCallback((id: string) => {
@@ -324,8 +352,14 @@ export function App() {
   // state, so BetSlipShell mounted with bouncy=false on its very first mount.
   // The ref is now flipped via BetSlipShell's onMounted callback (below).
   const addRandom = useCallback(() => {
-    const max = activeContest?.maxSelections ?? buttonProgressionConfig.maxSelections;
+    const contest = activeContestRef.current;
+    if (!contest) return;
+    const max = contest.maxSelections;
     if (selections.length >= max) return;
+    // Only pool from picks inside the active contest's own league/match
+    // scope (see contestScope.ts) — a debug add must respect the same
+    // scope the real chips/cards are limited to.
+    const scopedPicks = picksForContest(contest, MOCK_PICKS);
     // Skip options already selected AND options whose Más/Menos sibling is
     // already selected (same groupId) — the random add must respect the
     // same mutual-exclusion rule as a manual tap.
@@ -334,72 +368,100 @@ export function App() {
         .map((s) => MOCK_PICKS.find((p) => s.id.startsWith(p.id))?.groupId)
         .filter((g): g is string => Boolean(g)),
     );
-    const available = MOCK_PICKS.filter(
+    const available = scopedPicks.filter(
       (p) =>
         !selections.some((s) => s.id.startsWith(p.id)) &&
         !selectedGroupIds.has(p.groupId),
     );
-    const pool = available.length > 0 ? available : MOCK_PICKS;
+    const pool = available.length > 0 ? available : scopedPicks;
+    if (pool.length === 0) return;
     const next = pool[Math.floor(Math.random() * pool.length)];
-    setSelections((s) => [...s, { ...next, id: `${next.id}-${s.length}` }]);
+    updateDraft(contest.id, (s) => [...s, { ...next, id: `${next.id}-${s.length}` }]);
     // HAPTIC — light selection tick on add. No-op on iOS Safari.
     playSelectionHaptic();
-  }, [selections, activeContest]);
+  }, [selections, updateDraft]);
+
+  // Toggles a pick within a SPECIFIC contest's draft — the one primitive
+  // every entry point (feed card chips, the full-screen market accordion,
+  // debug controls, AND the One Click Bet long-press session) goes through,
+  // so none of them can bypass that contest's selection-count cap or the
+  // Más/Menos mutual-exclusion rule.
+  const togglePickFor = useCallback(
+    (contestId: string, id: string) => {
+      // HAPTIC — light selection tick on every toggle (add OR remove). The
+      // user's finger has already done the work; the haptic confirms it.
+      // No-op on iOS Safari (no Web Haptics API in 2026).
+      playSelectionHaptic();
+      updateDraft(contestId, (current) => {
+        const existing = current.find((s) => s.id.startsWith(id));
+        if (existing) return current.filter((s) => s !== existing);
+        const contest = CONTESTS.find((c) => c.id === contestId);
+        const max = contest?.maxSelections ?? buttonProgressionConfig.maxSelections;
+        if (current.length >= max) {
+          if (contest) {
+            setContestLimitNotice(
+              `Máximo ${max} selecciones para "${contest.name}".`,
+            );
+          }
+          return current;
+        }
+        const pick = MOCK_PICKS.find((p) => p.id === id);
+        if (!pick) return current;
+        // Más/Menos on the same player+market+threshold are mutually
+        // exclusive — selecting one replaces the other instead of stacking.
+        const withoutGroupConflict = current.filter((s) => {
+          const base = MOCK_PICKS.find((p) => s.id.startsWith(p.id));
+          return base?.groupId !== pick.groupId;
+        });
+        return [
+          ...withoutGroupConflict,
+          { ...pick, id: `${pick.id}-${withoutGroupConflict.length}` },
+        ];
+      });
+    },
+    [updateDraft],
+  );
 
   // Kept with a stable identity (reads `activeContestRef` rather than
-  // `activeContest` directly) since it's shared by taps, the debug controls,
-  // AND the One Click Bet long-press session (`onAccept` below) — none of
-  // those paths may bypass the active contest's selection-count cap.
-  const togglePick = useCallback((id: string) => {
-    // HAPTIC — light selection tick on every toggle (add OR remove). The
-    // user's finger has already done the work; the haptic confirms it.
-    // No-op on iOS Safari (no Web Haptics API in 2026).
-    playSelectionHaptic();
-    setSelections((current) => {
-      const existing = current.find((s) => s.id.startsWith(id));
-      if (existing) return current.filter((s) => s !== existing);
-      const contest = activeContestRef.current;
-      const max = contest?.maxSelections ?? buttonProgressionConfig.maxSelections;
-      if (current.length >= max) {
-        if (contest) {
-          setContestLimitNotice(
-            `Máximo ${max} selecciones para "${contest.name}".`,
-          );
-        }
-        return current;
-      }
-      const pick = MOCK_PICKS.find((p) => p.id === id);
-      if (!pick) return current;
-      // Más/Menos on the same player+market+threshold are mutually
-      // exclusive — selecting one replaces the other instead of stacking.
-      const withoutGroupConflict = current.filter((s) => {
-        const base = MOCK_PICKS.find((p) => s.id.startsWith(p.id));
-        return base?.groupId !== pick.groupId;
-      });
-      return [
-        ...withoutGroupConflict,
-        { ...pick, id: `${pick.id}-${withoutGroupConflict.length}` },
-      ];
-    });
-  }, []);
+  // `activeContest` directly) since it's shared by taps on the full-screen
+  // market accordion AND the One Click Bet long-press session (`onAccept`
+  // below) — both always act on the CURRENTLY OPEN contest's draft.
+  const togglePick = useCallback(
+    (id: string) => {
+      const contestId = activeContestRef.current?.id;
+      if (!contestId) return;
+      togglePickFor(contestId, id);
+    },
+    [togglePickFor],
+  );
 
   const removeLast = useCallback(() => {
-    setSelections((s) => {
+    const contestId = activeContestId;
+    if (!contestId) return;
+    updateDraft(contestId, (s) => {
       if (s.length === 0) return s;
       // HAPTIC — same light tick as toggle/add so removal feels consistent.
       playSelectionHaptic();
       return s.slice(0, -1);
     });
-  }, []);
+  }, [activeContestId, updateDraft]);
 
-  const reset = useCallback(() => setSelections([]), []);
+  const reset = useCallback(() => {
+    if (!activeContestId) return;
+    updateDraft(activeContestId, () => []);
+  }, [activeContestId, updateDraft]);
 
-  const jumpToTier = useCallback((target: Tier) => {
-    // Debug-only tool — still must not exceed the active contest's max.
-    const picks = selectionsForTier(target);
-    const max = activeContestRef.current?.maxSelections;
-    setSelections(max ? picks.slice(0, max) : picks);
-  }, []);
+  const jumpToTier = useCallback(
+    (target: Tier) => {
+      // Debug-only tool — still must not exceed the active contest's max.
+      const contestId = activeContestRef.current?.id;
+      if (!contestId) return;
+      const picks = selectionsForTier(target);
+      const max = activeContestRef.current?.maxSelections;
+      updateDraft(contestId, () => (max ? picks.slice(0, max) : picks));
+    },
+    [updateDraft],
+  );
 
   // Tapping a pick again removes it (togglePick's existing find-and-filter
   // branch) — that's the only "remove a selection" affordance now that
@@ -422,29 +484,45 @@ export function App() {
   // mutated and read synchronously regardless of which render's closure
   // is invoked, so it can't go stale.
   const submittingRef = useRef(false);
-  const enterContest = useCallback(() => {
-    if (submittingRef.current) return;
-    if (!activeContest) return;
-    if (!canConfirmContestEntry(activeContest, selections.length)) return;
-    submittingRef.current = true;
-    setSuccess(true);
-  }, [activeContest, selections.length]);
+  // Accepts an optional `contestId` so BOTH entry points — the full
+  // screen's `ContestPlayButton` (omits it, uses whichever contest is
+  // already active/open) AND a feed card's own "Jugar por: $X" CTA (passes
+  // its own contest id, which may not be the currently-open one) — share
+  // this exact guard/success path. Setting `activeContestId` here (even
+  // when triggered from the feed, which never changes `screen`) is what
+  // lets `finishEntryCreated` below know which contest's draft to save and
+  // clear, regardless of which screen the entry was submitted from.
+  const enterContest = useCallback(
+    (contestId?: string) => {
+      const targetId = contestId ?? activeContestId;
+      if (submittingRef.current || !targetId) return;
+      const contest = CONTESTS.find((c) => c.id === targetId);
+      if (!contest) return;
+      const draft = draftsByContest[targetId] ?? [];
+      if (!canConfirmContestEntry(contest, draft.length)) return;
+      submittingRef.current = true;
+      setActiveContestId(targetId);
+      setSuccess(true);
+    },
+    [activeContestId, draftsByContest],
+  );
 
   // Fired when the green ticket has flown into Mis entradas — settles the
-  // entry (badge bump, count, marks the contest "Participando"), clears the
-  // draft, and returns to the feed so the player can immediately enter
-  // another contest.
+  // entry (badge bump, count, marks the contest "Participando"), clears
+  // THAT contest's draft (never another contest's — each lives under its
+  // own key in `draftsByContest`), and returns to the feed so the player
+  // can immediately enter another contest.
   const finishEntryCreated = useCallback(() => {
     submittingRef.current = false;
     setSuccess(false);
     if (activeContestId) {
-      const entry = saveContestEntry(activeContestId, selections);
+      const entry = saveContestEntry(activeContestId, draftsByContest[activeContestId] ?? []);
       setContestEntries((es) => [...es, entry]);
+      updateDraft(activeContestId, () => []);
     }
-    setSelections([]);
     setEntryCount((c) => c + 1);
     setScreen('feed');
-  }, [activeContestId, selections]);
+  }, [activeContestId, draftsByContest, updateDraft]);
 
   // ONE CLICK BET SESSION — a completed hold only toggles the pressed pick's
   // normal selection state, exactly like a tap (see oneClickBetSession.ts's
@@ -712,10 +790,13 @@ export function App() {
               {screen === 'feed' ? (
                 <ContestsFeed
                   contests={CONTESTS}
-                  onPlay={openContest}
+                  onOpen={openContest}
+                  onEnter={enterContest}
                   onViewLeaderboard={openLeaderboard}
                   participatingIds={participatingContestIds}
                   entryCounts={entryCountsByContest}
+                  draftsByContest={draftsByContest}
+                  onTogglePick={togglePickFor}
                 />
               ) : screen === 'leaderboard' && activeContest ? (
                 <ContestLeaderboard
@@ -728,7 +809,7 @@ export function App() {
               ) : (
                 <>
               <HomeScreenChrome
-                picks={MOCK_PICKS}
+                picks={activeContest ? picksForContest(activeContest, MOCK_PICKS) : MOCK_PICKS}
                 selectedIds={baseSelectedIds}
                 bindPick={bindPick}
                 cancelActivePress={cancelOcbSession}
@@ -738,6 +819,8 @@ export function App() {
                 activeContest={activeContest}
                 selectionCount={selections.length}
                 contestLimitNotice={contestLimitNotice}
+                hideLeagueMatchTabs={!!activeContest && isContestScoped(activeContest)}
+                scopeLabel={activeContest ? contestScopeLabel(activeContest) : null}
               />
 
               {/* Debug controls inline (only visible with ?debug=true) */}
@@ -1002,7 +1085,7 @@ export function App() {
                         <ContestPlayButton
                           key="contest-play-button"
                           amount={activeContest!.entryCost}
-                          onPlay={enterContest}
+                          onPlay={() => enterContest()}
                         />
                       )}
                     </AnimatePresence>

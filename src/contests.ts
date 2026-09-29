@@ -40,6 +40,17 @@ export type Contest = {
   entryCost: number;
   /** Potential winnings in USD if the entry hits. */
   potentialWinnings: number;
+  /** League this contest is scoped to — one of `HomeScreen.tsx`'s
+      `MatchInfo.league` values (e.g. "Champions", "Premier"), or `'all'`
+      when the contest isn't restricted to one league (feed league tabs
+      show an `'all'`-scoped contest under every league, not just "Todos").
+      See `src/contestScope.ts` for the filtering/label helpers this
+      drives. */
+  league: string;
+  /** A specific match id (from `HomeScreen.tsx`'s `MATCHES`) this contest
+      is scoped to, or omitted for "any match within `league`" (or any
+      match at all, if `league === 'all'`). */
+  matchId?: string;
 };
 
 export const CONTEST_ACCENTS: Record<
@@ -130,6 +141,7 @@ export const CONTESTS: Contest[] = [
     maxSelections: 4,
     entryCost: 10,
     potentialWinnings: 250,
+    league: 'all',
   },
   {
     id: 'duelo-de-estrellas',
@@ -142,6 +154,8 @@ export const CONTESTS: Contest[] = [
     maxSelections: 2,
     entryCost: 25,
     potentialWinnings: 180,
+    league: 'Champions',
+    matchId: 'psg-rma',
   },
   {
     id: 'contest-semanal',
@@ -154,6 +168,7 @@ export const CONTESTS: Contest[] = [
     maxSelections: 6,
     entryCost: 15,
     potentialWinnings: 1200,
+    league: 'all',
   },
   {
     id: 'sprint-goleador',
@@ -165,6 +180,7 @@ export const CONTESTS: Contest[] = [
     maxSelections: 3,
     entryCost: 5,
     potentialWinnings: 60,
+    league: 'Premier',
   },
   {
     id: 'maxima-combinacion',
@@ -177,6 +193,7 @@ export const CONTESTS: Contest[] = [
     maxSelections: 8,
     entryCost: 50,
     potentialWinnings: 5000,
+    league: 'Champions',
   },
   {
     id: 'torneo-legendario',
@@ -189,5 +206,6 @@ export const CONTESTS: Contest[] = [
     maxSelections: 10,
     entryCost: 100,
     potentialWinnings: 25000,
+    league: 'all',
   },
 ];

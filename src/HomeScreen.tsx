@@ -281,27 +281,57 @@ export function Header({
 /*  league has a #4b20ff 2px ring + transparent purple gradient. */
 /*  Bottom border on the row + right-edge fade-to-black gradient.*/
 /*  Icons reuse the existing emoji glyphs.                       */
+/*                                                                */
+/*  Controlled/uncontrolled: on the full player-selection screen  */
+/*  it's called with no props at all (`<LeaguesTab />`) and keeps  */
+/*  managing its own internal selection exactly as before — purely  */
+/*  decorative there, not wired to any real filter. The contests      */
+/*  feed (`ContestsFeed.tsx`) instead passes `options`/`active`/         */
+/*  `onChange` to drive REAL league filtering with this exact same        */
+/*  component, per "bring in the same visual components already          */
+/*  used on the player-selection screen" — not a lookalike rebuild.        */
 /* ============================================================ */
-function LeaguesTab() {
-  const [activeLeague, setActiveLeague] = useState<string>('todofut');
-  const leagues = [
-    { id: 'todofut', label: 'TODO FUT', glyph: '⚽' },
-    { id: 'champ', label: 'CHAMPIONS', glyph: '🏆' },
-    { id: 'nfl', label: 'NFL', glyph: '🏈' },
-    { id: 'mlb', label: 'MLB', glyph: '⚾' },
-    { id: 'tenis', label: 'TENIS', glyph: '🎾' },
-    { id: 'prem', label: 'PREMIER', glyph: '🦁' },
-  ];
+export type LeagueTabOption = { id: string; label: string; glyph: string };
+
+const DEFAULT_LEAGUE_OPTIONS: LeagueTabOption[] = [
+  { id: 'todofut', label: 'TODO FUT', glyph: '⚽' },
+  { id: 'champ', label: 'CHAMPIONS', glyph: '🏆' },
+  { id: 'nfl', label: 'NFL', glyph: '🏈' },
+  { id: 'mlb', label: 'MLB', glyph: '⚾' },
+  { id: 'tenis', label: 'TENIS', glyph: '🎾' },
+  { id: 'prem', label: 'PREMIER', glyph: '🦁' },
+];
+
+export function LeaguesTab({
+  options = DEFAULT_LEAGUE_OPTIONS,
+  active,
+  onChange,
+}: {
+  options?: LeagueTabOption[];
+  /** Omit both `active`/`onChange` for the original uncontrolled/decorative
+      full-screen usage; pass both for a controlled, real filter (feed). */
+  active?: string;
+  onChange?: (id: string) => void;
+} = {}) {
+  const [internalActive, setInternalActive] = useState<string>(
+    options[0]?.id ?? '',
+  );
+  const isControlled = active !== undefined;
+  const activeLeague = isControlled ? active : internalActive;
+  const select = (id: string) => {
+    if (!isControlled) setInternalActive(id);
+    onChange?.(id);
+  };
   return (
     <div className="relative w-full border-b border-[rgba(251,251,251,0.12)]">
       <div className="no-scrollbar flex w-full items-center gap-3 overflow-x-auto px-3 pt-2">
-        {leagues.map((l) => {
+        {options.map((l) => {
           const isActive = activeLeague === l.id;
           return (
             <button
               key={l.id}
               type="button"
-              onClick={() => setActiveLeague(l.id)}
+              onClick={() => select(l.id)}
               className="flex h-[70px] shrink-0 cursor-pointer flex-col items-center active:scale-[0.96] transition-transform"
             >
               <div className="flex flex-col items-center gap-1">
@@ -351,37 +381,76 @@ function LeaguesTab() {
 /*  Match tabs row — Figma node 1664:42888                      */
 /*  Horizontal scroll: a "TODOS" gradient pill (selected) +     */
 /*  a series of two-line tabs (HOME vs AWAY / HOY (time)).      */
+/*                                                                */
+/*  Controlled/uncontrolled, same pattern as `LeaguesTab` above:  */
+/*  called with no props on the full screen (placeholder matches, */
+/*  purely decorative, unchanged); the contests feed passes real     */
+/*  `matches`/`active`/`onChange` to reuse this exact component for   */
+/*  actual match filtering.                                             */
 /* ============================================================ */
-function MatchTabsRow() {
-  const [activeMatch, setActiveMatch] = useState<string>('todos');
-  const matchTabs: Array<
-    | { id: 'todos' }
-    | { id: string; home: string; away: string; date: string; time: string }
-  > = [
-    { id: 'todos' },
-    { id: 'ars-rma', home: 'ARS', away: 'RMA', date: 'HOY', time: '00:00' },
-    { id: 'fcb-psg', home: 'FCB', away: 'PSG', date: 'HOY', time: '00:00' },
-    { id: 'abc-xyz-1', home: 'ABC', away: 'XYZ', date: 'HOY', time: '00:00' },
-    { id: 'abc-xyz-2', home: 'ABC', away: 'XYZ', date: 'HOY', time: '00:00' },
+export type MatchTabOption = {
+  id: string;
+  home: string;
+  away: string;
+  date: string;
+  time: string;
+};
+
+const DEFAULT_MATCH_TABS: MatchTabOption[] = [
+  { id: 'ars-rma', home: 'ARS', away: 'RMA', date: 'HOY', time: '00:00' },
+  { id: 'fcb-psg', home: 'FCB', away: 'PSG', date: 'HOY', time: '00:00' },
+  { id: 'abc-xyz-1', home: 'ABC', away: 'XYZ', date: 'HOY', time: '00:00' },
+  { id: 'abc-xyz-2', home: 'ABC', away: 'XYZ', date: 'HOY', time: '00:00' },
+];
+
+export function MatchTabsRow({
+  matches = DEFAULT_MATCH_TABS,
+  todosId = 'todos',
+  active,
+  onChange,
+}: {
+  matches?: MatchTabOption[];
+  /** id the leading "TODOS" pill reports on select — defaults to the
+      original placeholder value; the feed passes `'all'` to match its own
+      sentinel convention (see contestScope.ts). */
+  todosId?: string;
+  active?: string;
+  onChange?: (id: string) => void;
+} = {}) {
+  const [internalActive, setInternalActive] = useState<string>(todosId);
+  const isControlled = active !== undefined;
+  const activeMatch = isControlled ? active : internalActive;
+  const select = (id: string) => {
+    if (!isControlled) setInternalActive(id);
+    onChange?.(id);
+  };
+  const matchTabs: Array<{ id: string } | MatchTabOption> = [
+    { id: todosId },
+    ...matches,
   ];
 
   return (
     <div className="flex w-full flex-col items-start px-3">
       <div className="no-scrollbar flex w-full items-center gap-3 overflow-x-auto pb-1 pr-3 pt-2">
         {matchTabs.map((t) => {
-          const isTodos = t.id === 'todos';
+          const isTodos = t.id === todosId;
           const isActive = activeMatch === t.id;
           if (isTodos) {
             return (
               <button
                 key={t.id}
                 type="button"
-                onClick={() => setActiveMatch(t.id)}
-                className="relative flex h-5 shrink-0 cursor-pointer items-center justify-center rounded-[56px] px-1.5 text-[12px] font-bold leading-[18px] text-[#fbfbfb] active:scale-[0.96] transition-transform"
+                onClick={() => select(t.id)}
+                className={`relative flex h-5 shrink-0 cursor-pointer items-center justify-center rounded-[56px] border px-1.5 text-[12px] font-bold leading-[18px] active:scale-[0.96] transition-transform ${
+                  isActive ? 'text-[#fbfbfb]' : 'text-[rgba(251,251,251,0.7)]'
+                }`}
                 style={{
-                  backgroundImage:
-                    'linear-gradient(53.34deg, #4b20ff 0%, #9730ff 100%)',
                   fontFamily: 'Red Hat Display, sans-serif',
+                  borderColor: isActive ? 'transparent' : 'rgba(251,251,251,0.16)',
+                  backgroundImage: isActive
+                    ? 'linear-gradient(53.34deg, #4b20ff 0%, #9730ff 100%)'
+                    : undefined,
+                  backgroundColor: isActive ? undefined : 'rgba(251,251,251,0.08)',
                 }}
               >
                 TODOS
@@ -390,24 +459,35 @@ function MatchTabsRow() {
               </button>
             );
           }
-          // Two-line match tab (teams + date/time).
+          // Two-line match tab (teams + date/time). `isActive` drives the
+          // team-abbreviation row's text color — the original decorative
+          // version computed `isActive` but never actually applied it here
+          // (a dead ternary on the outer button — `isActive ? 'opacity-100'
+          // : 'opacity-100'` — is identical either way, and the inner div's
+          // color class was hardcoded to the inactive shade regardless of
+          // selection), so the currently-selected match never visually
+          // stood out. Harmless while this row was purely decorative;
+          // fixed now that it drives a real filter and needs real feedback.
+          const match = t as MatchTabOption;
           return (
             <button
-              key={t.id}
+              key={match.id}
               type="button"
-              onClick={() => setActiveMatch(t.id)}
-              className={`flex min-h-[40px] shrink-0 cursor-pointer flex-col items-center justify-center active:scale-[0.96] transition-transform ${
-                isActive ? 'opacity-100' : 'opacity-100'
-              }`}
+              onClick={() => select(match.id)}
+              className="flex min-h-[40px] shrink-0 cursor-pointer flex-col items-center justify-center active:scale-[0.96] transition-transform"
               style={{ fontFamily: 'Red Hat Display, sans-serif' }}
             >
-              <div className="flex items-baseline justify-center gap-0.5 text-[12px] font-bold leading-[18px] text-[rgba(251,251,251,0.5)]">
-                <span>{t.home}</span>
+              <div
+                className={`flex items-baseline justify-center gap-0.5 text-[12px] font-bold leading-[18px] ${
+                  isActive ? 'text-[#fbfbfb]' : 'text-[rgba(251,251,251,0.5)]'
+                }`}
+              >
+                <span>{match.home}</span>
                 <span>vs</span>
-                <span>{t.away}</span>
+                <span>{match.away}</span>
               </div>
               <span className="whitespace-nowrap text-[12px] font-medium leading-4 text-[rgba(251,251,251,0.5)]">
-                {t.date} ({t.time})
+                {match.date} ({match.time})
               </span>
             </button>
           );
@@ -510,7 +590,7 @@ const PLAYER_POSITION: Record<string, string> = {
 
 // Split a "Hoy 18:00" / "Mañana 21:00" kickoff into an uppercase date + a
 // time, for the two-line stamp in each card's top-right corner.
-function splitKickoff(matchTime: string): { date: string; time: string } {
+export function splitKickoff(matchTime: string): { date: string; time: string } {
   const [date, ...rest] = matchTime.split(' ');
   return { date: date.toUpperCase(), time: rest.join(' ') };
 }
@@ -519,7 +599,7 @@ function splitKickoff(matchTime: string): { date: string; time: string } {
     whichever of Más/Menos this player carries (see MOCK_PICKS — some players
     only have one side, some have both). Grouped by `groupId` so the pair
     renders as ONE card with up to two selection controls. */
-type PlayerGroup = {
+export type PlayerGroup = {
   groupId: string;
   pick: string;
   threshold: number;
@@ -530,7 +610,7 @@ type PlayerGroup = {
   menos?: Selection;
 };
 
-function groupPlayerPicks(picks: Selection[], market: string): PlayerGroup[] {
+export function groupPlayerPicks(picks: Selection[], market: string): PlayerGroup[] {
   const byGroup = new Map<string, PlayerGroup>();
   for (const p of picks) {
     if (p.market !== market) continue;
@@ -550,6 +630,219 @@ function groupPlayerPicks(picks: Selection[], market: string): PlayerGroup[] {
     else group.menos = p;
   }
   return [...byGroup.values()];
+}
+
+/** Short Spanish label for a market, used wherever a ruleset needs to fit
+    in a small space (the feed carousel's `showRuleset` line) — full market
+    names ("Anota gol en cualquier momento") are too long there. */
+export function marketShortLabel(market: string): string {
+  if (market === GOALS_MARKET) return 'Goles';
+  if (market === SHOTS_MARKET) return 'Tiros';
+  return market;
+}
+
+/** One player-prop card — Figma "playerProps" node (silhouette, name +
+    position, match info, stats icon, Más/Menos selection controls). The
+    ONE visual/selection-state implementation shared by the full-screen
+    market accordion's 2×2 grid (`size="default"`, gesture-bound via
+    `bindPick` — long-press for One Click Bet) and the contests feed's
+    horizontal player carousel (`size="compact"`, plain tap via `onSelect` —
+    no long-press there, since a hold would fight the carousel's own
+    horizontal drag). Exactly one of `bindPick`/`onSelect` should be given;
+    `showRuleset` prints the market + threshold under the name, which the
+    feed needs (there's no surrounding accordion title to supply that
+    context) and the full-screen grid doesn't (its accordion is already
+    titled by market). */
+export function PlayerPropCard({
+  group,
+  market,
+  selectedIds,
+  bindPick,
+  onSelect,
+  size = 'default',
+  showRuleset = false,
+  className = '',
+}: {
+  group: PlayerGroup;
+  market: string;
+  selectedIds: Set<string>;
+  bindPick?: BindPick;
+  onSelect?: (pickId: string) => void;
+  size?: 'default' | 'compact';
+  showRuleset?: boolean;
+  className?: string;
+}) {
+  const { date, time } = splitKickoff(group.matchTime);
+  const position = PLAYER_POSITION[group.pick] ?? 'DEL';
+  // Labeled selection controls — Más/Menos of the same market+threshold
+  // are mutually exclusive (enforced by App.tsx's togglePick via
+  // `groupId`); tapping the selected one deselects it instead of toggling
+  // to the other.
+  const options = [
+    group.mas && { key: 'mas' as const, label: 'Más', sel: group.mas },
+    group.menos && { key: 'menos' as const, label: 'Menos', sel: group.menos },
+  ].filter((o): o is { key: 'mas' | 'menos'; label: string; sel: Selection } => Boolean(o));
+
+  const compact = size === 'compact';
+  const imageSize = compact ? 56 : 76;
+
+  return (
+    <div
+      // No `w-full` baked in here — mixing it with a caller-supplied
+      // arbitrary width class (e.g. the carousel's `w-[130px]`) on the
+      // same element is an unreliable Tailwind conflict (both are valid,
+      // same-specificity utility classes; whichever wins is a function of
+      // generated CSS order, not DOM class order). Every call site passes
+      // its own sizing via `className` instead — `w-full` for the grid,
+      // a fixed width for the carousel.
+      className={`relative flex flex-col items-center gap-1.5 overflow-hidden rounded-[20px] border border-[rgba(251,251,251,0.12)] bg-black ${
+        compact ? 'p-2' : 'p-2.5 gap-2'
+      } ${className}`}
+    >
+      {/* TODO: decorative "light" glow at top of card —
+          Figma uses imgLight (no asset uploaded). */}
+
+      {/* Top-left: stats icon (chart bars) */}
+      <div className="absolute left-2 top-2 z-10 flex size-5 items-center justify-center rounded-md bg-[rgba(251,251,251,0.12)] p-0.5 backdrop-blur-sm">
+        <img src={statsIcon} alt="" aria-hidden className="h-3 w-3" />
+      </div>
+
+      {/* Top-right: match teams + date + time */}
+      <div className="absolute right-2 top-2 z-10 flex flex-col items-end">
+        <div
+          className="flex items-baseline gap-px text-[10px] leading-[15px]"
+          style={{ fontFamily: 'Red Hat Display, sans-serif' }}
+        >
+          <span className="font-medium text-[rgba(251,251,251,0.7)]">{group.homeAbbrev}</span>
+          <span className="font-medium text-[rgba(251,251,251,0.44)]">vs</span>
+          <span className="font-medium text-[rgba(251,251,251,0.44)]">{group.awayAbbrev}</span>
+        </div>
+        {!compact && (
+          <>
+            <span
+              className="text-[10px] font-medium leading-[15px] text-[rgba(251,251,251,0.44)]"
+              style={{ fontFamily: 'Red Hat Display, sans-serif' }}
+            >
+              {date}
+            </span>
+            <span
+              className="text-[10px] font-medium leading-[15px] text-[rgba(251,251,251,0.44)]"
+              style={{ fontFamily: 'Red Hat Display, sans-serif' }}
+            >
+              {time}
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* Player image + name + position (+ ruleset, feed-carousel only).
+          The gradient fade sits ABOVE the bottom of the silhouette
+          (covering shoulders/chest) and EXTENDS DOWN behind the player
+          name, so the head reads crisp and the name floats over a black
+          wash. */}
+      <div className="relative flex w-full flex-col items-center pt-2">
+        <img
+          src={playerIcon}
+          alt=""
+          aria-hidden
+          className="relative z-0"
+          width={imageSize}
+          height={imageSize}
+        />
+        {/* Fade — anchored to the bottom of the player container, scaled
+            down alongside the image in compact mode. Starts halfway down
+            the silhouette, ends just past the name. */}
+        <div
+          className={`pointer-events-none absolute bottom-0 left-1/2 z-[1] -translate-x-1/2 bg-gradient-to-b from-transparent to-black ${
+            compact ? 'h-[44px] w-[110px]' : 'h-[60px] w-[140px]'
+          }`}
+          aria-hidden
+        />
+        <div
+          className="relative z-[2] flex items-baseline justify-center gap-0.5"
+          style={{ fontFamily: 'Red Hat Display, sans-serif' }}
+        >
+          <span
+            className={`truncate text-center font-medium text-[#fbfbfb] ${
+              compact ? 'max-w-[92px] text-[13px] leading-[18px]' : 'text-[14px] leading-[21px]'
+            }`}
+          >
+            {group.pick}
+          </span>
+          <span className="shrink-0 text-[10px] font-medium leading-[15px] text-[rgba(251,251,251,0.44)]">
+            {position}
+          </span>
+        </div>
+        {/* Ruleset — "Goles · Línea 0.5". Only the feed carousel needs
+            this (see doc comment above); the full-screen grid sits under
+            an already-titled market accordion. */}
+        {showRuleset && (
+          <span
+            className="relative z-[2] whitespace-nowrap text-[10px] font-medium leading-[14px] text-[rgba(251,251,251,0.5)]"
+            style={{ fontFamily: 'Red Hat Display, sans-serif' }}
+          >
+            {marketShortLabel(market)} · Línea {group.threshold}
+          </span>
+        )}
+      </div>
+
+      {/* Selection controls — Figma "playerProps" (20216:22083): MÁS/MENOS
+          label on top, arrow icon + line value below. No odds are shown.
+          When both sides exist they join into one pill (1.5px hairline
+          gap, only the outer corners rounded); a single side keeps all
+          four corners rounded. Hold progress renders only in the floating
+          pill (OneClickBetPill.tsx) — the gesture-bound (`bindPick`)
+          variant stays `qb-hold` only for the touch-action rule; the
+          plain-tap (`onSelect`) variant used by the feed carousel skips
+          that class entirely, since it never participates in a hold. */}
+      <div className={`flex w-full items-center gap-[1.5px] ${compact ? 'h-9' : 'h-11'}`}>
+        {options.map(({ key, label, sel }, i) => {
+          const selected = selectedIds.has(sel.id);
+          const corners =
+            options.length === 1 ? 'rounded-xl' : i === 0 ? 'rounded-l-xl' : 'rounded-r-xl';
+          const gestureProps = bindPick
+            ? { ...bindPick(sel), className: 'qb-hold qb-press' }
+            : { onClick: () => onSelect?.(sel.id), className: '' };
+          return (
+            <button
+              key={key}
+              type="button"
+              {...gestureProps}
+              aria-pressed={selected}
+              className={`${gestureProps.className} flex h-full flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 overflow-hidden border px-2 py-1 transition-all duration-200 active:scale-[0.96] ${corners} ${
+                selected
+                  ? 'border-[#d2ff72] bg-gradient-to-b from-[rgba(210,255,114,0.16)] to-[rgba(86,222,234,0.16)]'
+                  : 'border-[rgba(251,251,251,0.08)] bg-[rgba(251,251,251,0.12)]'
+              }`}
+            >
+              <span
+                className="whitespace-nowrap text-center text-[10px] font-medium leading-[15px] text-[rgba(251,251,251,0.5)]"
+                style={{ fontFamily: 'Red Hat Display, sans-serif' }}
+              >
+                {label.toUpperCase()}
+              </span>
+              <span className="flex items-center gap-0.5">
+                <img
+                  src={key === 'mas' ? arrowNarrowUpIcon : arrowNarrowDownIcon}
+                  alt=""
+                  aria-hidden
+                  className="h-3 w-3"
+                />
+                <span
+                  className={`whitespace-nowrap text-center text-[14px] leading-[21px] text-[#fbfbfb] ${
+                    selected ? 'font-bold' : 'font-medium'
+                  }`}
+                  style={{ fontFamily: 'Red Hat Display, sans-serif' }}
+                >
+                  {group.threshold}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function MarketAccordion({
@@ -604,157 +897,16 @@ function MarketAccordion({
       {isOpen && (
         <div className="flex flex-col gap-1 pt-1">
           <div className="grid grid-cols-2 gap-2">
-            {playerGroups.map((g) => {
-              const { date, time } = splitKickoff(g.matchTime);
-              const position = PLAYER_POSITION[g.pick] ?? 'DEL';
-              // Labeled selection controls — Más/Menos of the same
-              // market+threshold are mutually exclusive (enforced by
-              // App.tsx's togglePick via `groupId`); tapping the selected
-              // one deselects it instead of toggling to the other.
-              const options = [
-                g.mas && { key: 'mas' as const, label: 'Más', sel: g.mas },
-                g.menos && { key: 'menos' as const, label: 'Menos', sel: g.menos },
-              ].filter((o): o is { key: 'mas' | 'menos'; label: string; sel: Selection } => Boolean(o));
-              return (
-                <div
-                  key={g.groupId}
-                  className="relative flex flex-col items-center gap-2 overflow-hidden rounded-[20px] border border-[rgba(251,251,251,0.12)] bg-black p-2.5"
-                >
-                  {/* TODO: decorative "light" glow at top of card —
-                      Figma uses imgLight (no asset uploaded). */}
-
-                  {/* Top-left: stats icon (chart bars) */}
-                  <div className="absolute left-2.5 top-2.5 z-10 flex size-5 items-center justify-center rounded-md bg-[rgba(251,251,251,0.12)] p-0.5 backdrop-blur-sm">
-                    <img
-                      src={statsIcon}
-                      alt=""
-                      aria-hidden
-                      className="h-3 w-3"
-                    />
-                  </div>
-
-                  {/* Top-right: match teams + date + time */}
-                  <div className="absolute right-2.5 top-2.5 z-10 flex flex-col items-end">
-                    <div
-                      className="flex items-baseline gap-px text-[10px] leading-[15px]"
-                      style={{ fontFamily: 'Red Hat Display, sans-serif' }}
-                    >
-                      <span className="font-medium text-[rgba(251,251,251,0.7)]">
-                        {g.homeAbbrev}
-                      </span>
-                      <span className="font-medium text-[rgba(251,251,251,0.44)]">
-                        vs
-                      </span>
-                      <span className="font-medium text-[rgba(251,251,251,0.44)]">
-                        {g.awayAbbrev}
-                      </span>
-                    </div>
-                    <span
-                      className="text-[10px] font-medium leading-[15px] text-[rgba(251,251,251,0.44)]"
-                      style={{ fontFamily: 'Red Hat Display, sans-serif' }}
-                    >
-                      {date}
-                    </span>
-                    <span
-                      className="text-[10px] font-medium leading-[15px] text-[rgba(251,251,251,0.44)]"
-                      style={{ fontFamily: 'Red Hat Display, sans-serif' }}
-                    >
-                      {time}
-                    </span>
-                  </div>
-
-                  {/* Player image + name + position.
-                      The gradient fade sits ABOVE the bottom of the
-                      silhouette (covering shoulders/chest) and EXTENDS
-                      DOWN behind the player name, so the head reads
-                      crisp and the name floats over a black wash. */}
-                  <div className="relative flex w-full flex-col items-center pt-2">
-                    <img
-                      src={playerIcon}
-                      alt=""
-                      aria-hidden
-                      className="relative z-0"
-                      width={76}
-                      height={76}
-                    />
-                    {/* Fade — 60px tall, ~140px wide, anchored to the
-                        bottom of the player container. Starts halfway
-                        down the silhouette, ends just past the name. */}
-                    <div
-                      className="pointer-events-none absolute bottom-0 left-1/2 z-[1] h-[60px] w-[140px] -translate-x-1/2 bg-gradient-to-b from-transparent to-black"
-                      aria-hidden
-                    />
-                    <div
-                      className="relative z-[2] flex items-baseline justify-center gap-0.5"
-                      style={{ fontFamily: 'Red Hat Display, sans-serif' }}
-                    >
-                      <span className="text-[14px] font-medium leading-[21px] text-[#fbfbfb]">
-                        {g.pick}
-                      </span>
-                      <span className="text-[10px] font-medium leading-[15px] text-[rgba(251,251,251,0.44)]">
-                        {position}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Selection controls — Figma "playerProps" (20216:22083):
-                      MÁS/MENOS label on top, arrow icon + line value below.
-                      No odds are shown. When both sides exist they join into
-                      one pill (1.5px hairline gap, only the outer corners
-                      rounded); a single side keeps all four corners rounded.
-                      Hold progress renders only in the floating pill
-                      (OneClickBetPill.tsx) — these stay `qb-hold` only for
-                      the touch-action rule. */}
-                  <div className="flex h-11 w-full items-center gap-[1.5px]">
-                    {options.map(({ key, label, sel }, i) => {
-                      const selected = selectedIds.has(sel.id);
-                      const corners =
-                        options.length === 1
-                          ? 'rounded-xl'
-                          : i === 0
-                            ? 'rounded-l-xl'
-                            : 'rounded-r-xl';
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          {...bindPick(sel)}
-                          aria-pressed={selected}
-                          className={`qb-hold qb-press flex h-11 flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 overflow-hidden border px-2 py-1 transition-all duration-200 active:scale-[0.96] ${corners} ${
-                            selected
-                              ? 'border-[#d2ff72] bg-gradient-to-b from-[rgba(210,255,114,0.16)] to-[rgba(86,222,234,0.16)]'
-                              : 'border-[rgba(251,251,251,0.08)] bg-[rgba(251,251,251,0.12)]'
-                          }`}
-                        >
-                          <span
-                            className="whitespace-nowrap text-center text-[10px] font-medium leading-[15px] text-[rgba(251,251,251,0.5)]"
-                            style={{ fontFamily: 'Red Hat Display, sans-serif' }}
-                          >
-                            {label.toUpperCase()}
-                          </span>
-                          <span className="flex items-center gap-0.5">
-                            <img
-                              src={key === 'mas' ? arrowNarrowUpIcon : arrowNarrowDownIcon}
-                              alt=""
-                              aria-hidden
-                              className="h-3 w-3"
-                            />
-                            <span
-                              className={`whitespace-nowrap text-center text-[14px] leading-[21px] text-[#fbfbfb] ${
-                                selected ? 'font-bold' : 'font-medium'
-                              }`}
-                              style={{ fontFamily: 'Red Hat Display, sans-serif' }}
-                            >
-                              {g.threshold}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
+            {playerGroups.map((g) => (
+              <PlayerPropCard
+                key={g.groupId}
+                group={g}
+                market={title}
+                selectedIds={selectedIds}
+                bindPick={bindPick}
+                className="w-full"
+              />
+            ))}
           </div>
 
           {/* Ver todos (N) — tertiary CTA */}
@@ -954,6 +1106,15 @@ type HomeScreenChromeProps = {
   /** In-context explanation shown when a selection was blocked because the
       active contest's maximum was reached (see App.tsx's togglePick). */
   contestLimitNotice?: string | null;
+  /** True when the active contest is scoped to a specific league or match
+      (see contests.ts's `league`/`matchId` + contestScope.ts) — hides the
+      leagues row + match tabs (there's nothing to navigate to, the scope is
+      fixed) while keeping the market pills row. */
+  hideLeagueMatchTabs?: boolean;
+  /** Plain-text league/match context for a scoped contest (e.g. "Champions"
+      or "Champions · PSG vs RMA · Hoy 18:00"), shown in the context bar so
+      the scope is still clear once the nav tabs are hidden. */
+  scopeLabel?: string | null;
 };
 
 function HomeScreenChromeImpl({
@@ -967,6 +1128,8 @@ function HomeScreenChromeImpl({
   activeContest,
   selectionCount = 0,
   contestLimitNotice,
+  hideLeagueMatchTabs = false,
+  scopeLabel,
 }: HomeScreenChromeProps) {
   // Two-tier sticky header: the topbar (status + logo/balance) pins at the
   // very top; the leagues row + match tabs + pill markets pin just below it
@@ -1029,6 +1192,14 @@ function HomeScreenChromeImpl({
                   / {activeContest.maxSelections} elegidas
                 </span>
               </div>
+              {/* League/match scope — only meaningful once the nav tabs are
+                  hidden below (a contest scoped to 'all' has no fixed scope
+                  to restate here). */}
+              {scopeLabel && (
+                <span className="mt-0.5 text-[11px] font-bold uppercase tracking-wide text-[rgba(251,251,251,0.6)]">
+                  {scopeLabel}
+                </span>
+              )}
               {/* Contextual status — communicates exactly how many more are
                   needed below the minimum; a confirmation once playable;
                   the max explicitly once reached (further adds are already
@@ -1073,14 +1244,18 @@ function HomeScreenChromeImpl({
           pinned just below the topbar. The leagues row collapses (height +
           opacity) while scrolling down and springs back on scroll-up. */}
       <div className="sticky z-20 bg-black" style={{ top: topbarH }}>
-        <div
-          className={`overflow-hidden transition-all duration-[250ms] ease-out ${
-            headerCollapsed ? 'max-h-0 opacity-0' : 'max-h-[96px] opacity-100'
-          }`}
-        >
-          <LeaguesTab />
-        </div>
-        <MatchTabsRow />
+        {!hideLeagueMatchTabs && (
+          <>
+            <div
+              className={`overflow-hidden transition-all duration-[250ms] ease-out ${
+                headerCollapsed ? 'max-h-0 opacity-0' : 'max-h-[96px] opacity-100'
+              }`}
+            >
+              <LeaguesTab />
+            </div>
+            <MatchTabsRow />
+          </>
+        )}
         <TabsAndPills />
       </div>
 
