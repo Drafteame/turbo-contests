@@ -1,11 +1,20 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { tierForOdds, type ButtonLiveState } from './ButtonPreviewMomios';
-import { buttonProgressionConfig, canConfirmEntry } from './buttonProgressionConfig';
+import { buttonProgressionConfig } from './buttonProgressionConfig';
 import { playSelectionHaptic, playTierCrossingHaptic } from './haptics';
 import { HomeScreenChrome, MOCK_PICKS, Navbar } from './HomeScreen';
-import { BetSlipFullSheet } from './BetSlipFullSheet';
-import { BetSlipSheet } from './BetSlipSheet';
+import { ContestsFeed } from './ContestsFeed';
+import { ContestLeaderboard } from './ContestLeaderboard';
+import { ContestEntrySheet } from './ContestEntrySheet';
+import { CONTESTS, canConfirmContestEntry } from './contests';
+import {
+  entriesForContest,
+  loadContestEntries,
+  saveContestEntry,
+  type ContestEntry,
+} from './contestEntries';
+import { ContestPlayButton } from './ContestPlayButton';
 import { EntryCreatedOverlay } from './EntryCreatedOverlay';
 import { OnboardingSheet } from './OnboardingSheet';
 import {
@@ -120,6 +129,58 @@ export function App() {
   // entry/exit motion). Only real prefers-reduced-motion simplifies it.
   const osReducedMotion = useReducedMotion();
   const [selections, setSelections] = useState<Selection[]>([]);
+  // CONTESTS FEED — the app's main screen. Opening a contest card sets
+  // `activeContestId` and switches to the existing player-selection screen
+  // (unchanged below); the header's back button (see HomeScreen's Header)
+  // returns to the feed. Selections are cleared on open since each contest
+  // has its own min/max selection rules — see CONTESTS in contests.ts.
+  const [screen, setScreen] = useState<'feed' | 'contest' | 'leaderboard'>(
+    'feed',
+  );
+  const [activeContestId, setActiveContestId] = useState<string | null>(null);
+  const activeContest = useMemo(
+    () => CONTESTS.find((c) => c.id === activeContestId) ?? null,
+    [activeContestId],
+  );
+  const openContest = useCallback((id: string) => {
+    setActiveContestId(id);
+    setSelections([]);
+    setScreen('contest');
+  }, []);
+  const openLeaderboard = useCallback((id: string) => {
+    setActiveContestId(id);
+    setSelectedEntryId(null);
+    setScreen('leaderboard');
+  }, []);
+  const backToFeed = useCallback(() => {
+    setSelectedEntryId(null);
+    setScreen('feed');
+  }, []);
+  // Which of the player's own entries is open in the read-only detail
+  // sheet (see ContestEntrySheet) — null when none is. Cleared whenever
+  // the player navigates away from the leaderboard so a stale sheet can
+  // never reappear over a different screen.
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  // Mirrors `activeContest` into a ref so the stable-identity callbacks below
+  // (togglePick, jumpToTier — kept with empty/minimal deps so they aren't
+  // recreated on every render) can read the CURRENT contest without being
+  // recreated every time it changes.
+  const activeContestRef = useRef(activeContest);
+  useEffect(() => {
+    activeContestRef.current = activeContest;
+  }, [activeContest]);
+  // Brief, in-context explanation shown when a selection is blocked because
+  // the active contest's maximum has been reached (tap, long-press, AND the
+  // debug "+ Añadir selección" control all route through togglePick, so none
+  // of them can bypass this). Auto-clears after a few seconds.
+  const [contestLimitNotice, setContestLimitNotice] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!contestLimitNotice) return;
+    const t = setTimeout(() => setContestLimitNotice(null), 2600);
+    return () => clearTimeout(t);
+  }, [contestLimitNotice]);
   // QUICK BET ONBOARDING — no longer auto-opens on load; only reachable via
   // the debug-overlay "Show onboarding sheet" button (or a future explicit
   // user-triggered entry point).
@@ -146,30 +207,59 @@ export function App() {
   // subsequent 0 → 1 transitions skip the bounce.
   const hasBouncedOnceRef = useRef(false);
 
-  // Bet-slip view state. The summarized purple-glass expand (BetSlipSheet's
-  // `expanded` state) is retired — the slip only ever shows as the collapsed
-  // pill; tapping it opens the "Resumen" floating card (BetSlipFullSheet)
-  // directly, at any selection count. See the `checkpoint-pre-pill-only-slip`
-  // branch for the prior behavior.
-  // Full-screen "Resumen de tu entrada" sheet (opened by tapping the pill).
-  const [listOpen, setListOpen] = useState(false);
-  // Swipe-to-confirm success sequence: green "Entrada creada" card + ticket
-  // fly into Mis entradas, then the count badge.
+  // CONTEST ENTRY — tapping the `ContestPlayButton` creates the entry
+  // directly (no review step, no swipe gesture — see the "Contest draft/
+  // review flow" landmark). `success` drives the shared "Entrada creada"
+  // animation sequence exactly as before.
   const [success, setSuccess] = useState(false);
+  // Contest entries — persisted to localStorage (see contestEntries.ts) so
+  // the joined state and entry history survive a page reload. Every entry
+  // is created `status: 'pending'` and stays that way: this prototype has
+  // no scoring engine, so a live score/rank is never invented for one.
+  const [contestEntries, setContestEntries] = useState<ContestEntry[]>(() =>
+    loadContestEntries(),
+  );
+  // Ids of contests the player has entered at least once — derived, not
+  // duplicated state, so it can never drift from `contestEntries`.
+  // Entering again is still allowed (nothing in the product spec blocks a
+  // repeat entry), and this Set counts the player once regardless of how
+  // many entries they've made.
+  const participatingContestIds = useMemo(
+    () => new Set(contestEntries.map((e) => e.contestId)),
+    [contestEntries],
+  );
+  const entryCountsByContest = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of contestEntries) {
+      counts.set(e.contestId, (counts.get(e.contestId) ?? 0) + 1);
+    }
+    return counts;
+  }, [contestEntries]);
+  // The active contest's own entries, in the same order the leaderboard
+  // lists them — both the leaderboard and the detail sheet index off this
+  // same array so "Entrada #N" always matches between the two.
+  const activeContestEntries = useMemo(
+    () =>
+      activeContestId
+        ? entriesForContest(contestEntries, activeContestId)
+        : [],
+    [contestEntries, activeContestId],
+  );
+  const selectedEntryIndex = useMemo(
+    () => activeContestEntries.findIndex((e) => e.id === selectedEntryId),
+    [activeContestEntries, selectedEntryId],
+  );
+  const selectedEntry =
+    selectedEntryIndex >= 0 ? activeContestEntries[selectedEntryIndex] : null;
   // ONE CLICK BET — floating progress pill (see OneClickBetPill.tsx). The
   // REAL hold-driven values come from the OneClickBetSession (ocbSession,
   // defined below); `debugOcbState`/`debugOcbProgress` only drive the pill
   // when no real Quick Bet hold is active (`?debug=true` dev controls,
-  // preview-only). 'hidden' means the region shows the normal bet-slip
-  // pill/summarized slip as usual.
+  // preview-only). 'hidden' means the region shows the normal contest play
+  // button as usual.
   const [debugOcbState, setDebugOcbState] =
     useState<OneClickBetPillState>('hidden');
   const [debugOcbProgress, setDebugOcbProgress] = useState(0);
-  // Dev-only override so the `?debug=true` controls can preview the
-  // (production-retired, see CLAUDE.md "pill-only bet slip") summarized
-  // slip alongside the new pill without touching the real `expanded={false}`
-  // wiring below.
-  const [debugSlipExpanded, setDebugSlipExpanded] = useState(false);
 
   // Dismissal (× button, backdrop tap, swipe-down, or the primary CTA) —
   // persists "seen" for the rest of this browser session so it doesn't
@@ -234,7 +324,8 @@ export function App() {
   // state, so BetSlipShell mounted with bouncy=false on its very first mount.
   // The ref is now flipped via BetSlipShell's onMounted callback (below).
   const addRandom = useCallback(() => {
-    if (selections.length >= buttonProgressionConfig.maxSelections) return;
+    const max = activeContest?.maxSelections ?? buttonProgressionConfig.maxSelections;
+    if (selections.length >= max) return;
     // Skip options already selected AND options whose Más/Menos sibling is
     // already selected (same groupId) — the random add must respect the
     // same mutual-exclusion rule as a manual tap.
@@ -253,8 +344,12 @@ export function App() {
     setSelections((s) => [...s, { ...next, id: `${next.id}-${s.length}` }]);
     // HAPTIC — light selection tick on add. No-op on iOS Safari.
     playSelectionHaptic();
-  }, [selections]);
+  }, [selections, activeContest]);
 
+  // Kept with a stable identity (reads `activeContestRef` rather than
+  // `activeContest` directly) since it's shared by taps, the debug controls,
+  // AND the One Click Bet long-press session (`onAccept` below) — none of
+  // those paths may bypass the active contest's selection-count cap.
   const togglePick = useCallback((id: string) => {
     // HAPTIC — light selection tick on every toggle (add OR remove). The
     // user's finger has already done the work; the haptic confirms it.
@@ -263,7 +358,16 @@ export function App() {
     setSelections((current) => {
       const existing = current.find((s) => s.id.startsWith(id));
       if (existing) return current.filter((s) => s !== existing);
-      if (current.length >= buttonProgressionConfig.maxSelections) return current;
+      const contest = activeContestRef.current;
+      const max = contest?.maxSelections ?? buttonProgressionConfig.maxSelections;
+      if (current.length >= max) {
+        if (contest) {
+          setContestLimitNotice(
+            `Máximo ${max} selecciones para "${contest.name}".`,
+          );
+        }
+        return current;
+      }
       const pick = MOCK_PICKS.find((p) => p.id === id);
       if (!pick) return current;
       // Más/Menos on the same player+market+threshold are mutually
@@ -291,42 +395,56 @@ export function App() {
   const reset = useCallback(() => setSelections([]), []);
 
   const jumpToTier = useCallback((target: Tier) => {
-    setSelections(selectionsForTier(target));
+    // Debug-only tool — still must not exceed the active contest's max.
+    const picks = selectionsForTier(target);
+    const max = activeContestRef.current?.maxSelections;
+    setSelections(max ? picks.slice(0, max) : picks);
   }, []);
 
-  // Remove a single selection from the "Resumen" floating card (× on its row).
-  const removeSelection = useCallback((id: string) => {
-    playSelectionHaptic();
-    setSelections((s) => s.filter((sel) => sel.id !== id));
-  }, []);
+  // Tapping a pick again removes it (togglePick's existing find-and-filter
+  // branch) — that's the only "remove a selection" affordance now that
+  // there's no review list of rows with their own × buttons.
 
-  // Place the bet from the "Resumen" floating card (swipe-to-confirm). Prototype
-  // behavior: clear the slip, as a placed bet would. Wire to real
-  // bet-placement here when a backend exists.
-  // Swipe-to-confirm → play the success animation (slip hidden behind the
-  // green overlay via `success`). The overlay's onDone finishes the sequence.
-  // Guarded here too (not just in the UI, which already disables the swipe
-  // track below `minSelections`) — see buttonProgressionConfig's
-  // `canConfirmEntry`. Also guarded against `success` already being true:
-  // an entry is created by exactly one completed swipe, so while one is
-  // already mid-creation/animation, a second call (a duplicate tap, or a
-  // stray callback) must be a no-op rather than starting another entry.
-  const confirmBet = useCallback(() => {
-    if (success) return;
-    if (!canConfirmEntry(selections.length)) return;
-    setListOpen(false);
+  // ContestPlayButton's tap handler — creates the entry DIRECTLY, no review
+  // step or swipe gesture. Re-validates against the ACTIVE contest (not just
+  // trusting that the button was visible/enabled) so a stale click can never
+  // submit outside its selection range — see the "must not bypass contest
+  // rules" requirement. Also guarded against `success` already being true —
+  // an entry is created by exactly one tap, so a double-click/duplicate
+  // event while one is already mid-creation/animation must be a no-op
+  // rather than starting a second entry.
+  // `submittingRef` (not just the `success` state) is the actual double-
+  // submission guard: `ContestPlayButton` stays mounted through its exit
+  // animation (AnimatePresence), holding the `onPlay` closure captured at
+  // its LAST render before removal — which still closes over `success ===
+  // false`. A second tap landing during that exit would read that stale
+  // closure value and slip past a plain `if (success) return`. A ref is
+  // mutated and read synchronously regardless of which render's closure
+  // is invoked, so it can't go stale.
+  const submittingRef = useRef(false);
+  const enterContest = useCallback(() => {
+    if (submittingRef.current) return;
+    if (!activeContest) return;
+    if (!canConfirmContestEntry(activeContest, selections.length)) return;
+    submittingRef.current = true;
     setSuccess(true);
-  }, [selections.length, success]);
+  }, [activeContest, selections.length]);
 
   // Fired when the green ticket has flown into Mis entradas — settles the
-  // entry (badge bump, count) and returns to idle. Only the real
-  // swipe-to-confirm flow ever sets `success`, so this always clears the
-  // slip, same as a placed bet.
+  // entry (badge bump, count, marks the contest "Participando"), clears the
+  // draft, and returns to the feed so the player can immediately enter
+  // another contest.
   const finishEntryCreated = useCallback(() => {
+    submittingRef.current = false;
     setSuccess(false);
+    if (activeContestId) {
+      const entry = saveContestEntry(activeContestId, selections);
+      setContestEntries((es) => [...es, entry]);
+    }
     setSelections([]);
     setEntryCount((c) => c + 1);
-  }, []);
+    setScreen('feed');
+  }, [activeContestId, selections]);
 
   // ONE CLICK BET SESSION — a completed hold only toggles the pressed pick's
   // normal selection state, exactly like a tap (see oneClickBetSession.ts's
@@ -413,13 +531,22 @@ export function App() {
   // selection count, including 0 (empty-state pill: 0 bets, $0 / $0,
   // disabled CTA) — only the success overlay hides it (the One Click Bet
   // floating pill sits in the same slot and is hidden/shown separately, see
-  // `oneClickBetPillVisible`; a long-press no longer suppresses the slip,
-  // since it only ever adds/selects a pick into it). Drives BOTH the slip
-  // mount and the size of the dark gradient behind the navbar: the gradient
-  // only needs to extend up far enough to separate the slip from the
-  // content when the slip is present. When it's absent, the reserved slot
-  // collapses so the gradient shrinks to just the navbar band.
-  const betSlipVisible = !success;
+  // `oneClickBetPillVisible`; a long-press no longer suppresses the button,
+  // since it only ever adds/selects a pick). Drives BOTH the button mount
+  // and the size of the dark gradient behind the navbar: the gradient only
+  // needs to extend up far enough to separate the button from the content
+  // when it's present. When it's absent, the reserved slot collapses so the
+  // gradient shrinks to just the navbar band.
+  //
+  // Visible only while the CURRENT selection count is within the active
+  // contest's allowed range (inclusive of both ends) — below the minimum
+  // the top contest-context bar explains how many more are needed instead;
+  // at the maximum, togglePick already refuses further adds.
+  const contestPlayButtonVisible =
+    !success &&
+    screen === 'contest' &&
+    !!activeContest &&
+    canConfirmContestEntry(activeContest, selections.length);
 
   /* ============================================================ */
   /*  Render                                                      */
@@ -582,13 +709,37 @@ export function App() {
                 });
               }}
             >
+              {screen === 'feed' ? (
+                <ContestsFeed
+                  contests={CONTESTS}
+                  onPlay={openContest}
+                  onViewLeaderboard={openLeaderboard}
+                  participatingIds={participatingContestIds}
+                  entryCounts={entryCountsByContest}
+                />
+              ) : screen === 'leaderboard' && activeContest ? (
+                <ContestLeaderboard
+                  contest={activeContest}
+                  entries={activeContestEntries}
+                  onBack={backToFeed}
+                  onCreateEntry={() => openContest(activeContest.id)}
+                  onSelectEntry={setSelectedEntryId}
+                />
+              ) : (
+                <>
               <HomeScreenChrome
                 picks={MOCK_PICKS}
                 selectedIds={baseSelectedIds}
                 bindPick={bindPick}
                 cancelActivePress={cancelOcbSession}
                 headerCollapsed={navCompact}
+                onBack={backToFeed}
+                activeContestName={activeContest?.name}
+                activeContest={activeContest}
+                selectionCount={selections.length}
+                contestLimitNotice={contestLimitNotice}
               />
+
               {/* Debug controls inline (only visible with ?debug=true) */}
               {debug && (
                 <div className="mx-3 mb-2 mt-3 rounded-xl border border-amber-400/30 bg-amber-400/5 p-3">
@@ -650,31 +801,14 @@ export function App() {
                   </div>
                   <div className="mb-1.5 grid grid-cols-2 gap-1.5">
                     <button
-                      onClick={() => {
-                        setDebugOcbState('hidden');
-                        setDebugSlipExpanded(false);
-                      }}
-                      className={`rounded-md px-2 py-1.5 text-[11px] font-bold ${
-                        debugOcbState === 'hidden' && !debugSlipExpanded
+                      onClick={() => setDebugOcbState('hidden')}
+                      className={`col-span-2 rounded-md px-2 py-1.5 text-[11px] font-bold ${
+                        debugOcbState === 'hidden'
                           ? 'bg-[#b18bff] text-black'
                           : 'bg-white/10 text-white'
                       }`}
                     >
-                      Bet-slip pill
-                    </button>
-                    <button
-                      onClick={() => {
-                        setDebugOcbState('hidden');
-                        setDebugSlipExpanded(true);
-                      }}
-                      disabled={selections.length === 0}
-                      className={`rounded-md px-2 py-1.5 text-[11px] font-bold disabled:opacity-30 ${
-                        debugOcbState === 'hidden' && debugSlipExpanded
-                          ? 'bg-[#b18bff] text-black'
-                          : 'bg-white/10 text-white'
-                      }`}
-                    >
-                      Summarized slip
+                      Contest play button
                     </button>
                     <button
                       onClick={() => setDebugOcbState('default')}
@@ -743,7 +877,9 @@ export function App() {
                   <button
                     onClick={addRandom}
                     disabled={
-                      selections.length >= buttonProgressionConfig.maxSelections
+                      selections.length >=
+                      (activeContest?.maxSelections ??
+                        buttonProgressionConfig.maxSelections)
                     }
                     className="flex-1 rounded-xl bg-gradient-to-r from-[#4b20ff] to-[#9730ff] px-3 py-2.5 text-[12px] font-bold text-white disabled:opacity-50"
                   >
@@ -764,6 +900,8 @@ export function App() {
                     Reset
                   </button>
                 </div>
+              )}
+                </>
               )}
             </div>
 
@@ -820,46 +958,36 @@ export function App() {
                   transition: 'background 700ms ease-out',
                 }}
               >
-                {/* Reserved-height slot. The slip is anchored to its BOTTOM
-                    (against the navbar), so this height only controls how far
-                    the dark gradient extends ABOVE the slip. It reserves the
-                    full height while the slip is on screen — giving the
-                    gradient enough reach to separate the slip from the
-                    content — and collapses to 0 otherwise so the gradient
-                    shrinks to just the navbar band. */}
+                {/* Reserved-height slot. The play button is anchored to its
+                    BOTTOM (against the navbar), so this height only controls
+                    how far the dark gradient extends ABOVE it. It reserves
+                    the full height while the button is on screen — giving
+                    the gradient enough reach to separate it from the content
+                    — and collapses to 0 otherwise so the gradient shrinks to
+                    just the navbar band. */}
                 <div
                   className="relative transition-[height] duration-300 ease-out"
                   style={{
                     height:
-                      betSlipVisible || oneClickBetPillVisible
+                      contestPlayButtonVisible || oneClickBetPillVisible
                         ? buttonProgressionConfig.slotReservedHeightPx
                         : 0,
                   }}
                 >
-                  {/* BET SLIP — pill-only now (the summarized purple-glass
-                      expand is retired, see `checkpoint-pre-pill-only-slip`).
-                      `expanded` is normally always false, so BetSlipSheet
-                      never morphs into the glass card in production; the
-                      `debug && debugSlipExpanded` override only ever fires
-                      from the `?debug=true` "Summarized slip" dev button
-                      above, purely to preview that dormant layout — tapping/
-                      swiping the pill still always opens the "Resumen"
-                      floating card (BetSlipFullSheet) via onExpand/onOpenList.
-                      onCollapse/onKeepAlive are unreachable no-ops —
-                      BetSlipSheet only fires them from gestures on its
-                      expanded content. Anchored to the slot's bottom
-                      baseline; the 8px gap above the navbar comes from the
-                      pill's own pb-2. Only one bet-slip element ever exists,
-                      so nothing shows behind it.
+                  {/* CONTEST PLAY BUTTON — replaces the collapsed bet slip on
+                      this screen (see the "Contest draft/review flow"
+                      landmark). Visible only while the CURRENT selection
+                      count is within the active contest's range
+                      (`contestPlayButtonVisible`); tapping it creates the
+                      entry directly — no review step, no swipe gesture.
+                      Anchored to the slot's bottom baseline; the 8px gap
+                      above the navbar comes from its own pb-2.
 
                       ONE CLICK BET VISIBILITY ARBITRATION — when the OCB
                       floating pill is visible (`oneClickBetPillVisible`),
-                      this whole wrapper (the slip) is hidden via
-                      `visibility:hidden`, NOT unmounted: the slip stays
-                      mounted with all its state (selections, collapse
-                      position, etc.) untouched and plays no exit animation,
-                      so restoring is just flipping visibility back — never
-                      recreated from scratch. */}
+                      this whole wrapper is hidden via `visibility:hidden`,
+                      NOT unmounted, so restoring is just flipping visibility
+                      back — never recreated from scratch. */}
                   <div
                     className="absolute inset-x-0 bottom-0 z-10"
                     style={
@@ -870,36 +998,27 @@ export function App() {
                     aria-hidden={oneClickBetPillVisible}
                   >
                     <AnimatePresence>
-                      {betSlipVisible && (
-                        <BetSlipSheet
-                          key="bet-slip-sheet"
-                          selections={selections}
-                          cumulativeOdds={cumulativeOdds}
-                          expanded={debug && debugSlipExpanded}
-                          onExpand={() => {
-                            if (selections.length > 0) setListOpen(true);
-                          }}
-                          onCollapse={() => {}}
-                          onRemove={removeSelection}
-                          onConfirm={confirmBet}
-                          onKeepAlive={() => {}}
-                          onOpenList={() => setListOpen(true)}
+                      {contestPlayButtonVisible && (
+                        <ContestPlayButton
+                          key="contest-play-button"
+                          amount={activeContest!.entryCost}
+                          onPlay={enterContest}
                         />
                       )}
                     </AnimatePresence>
                   </div>
 
                   {/* ONE CLICK BET — floating progress pill. Occupies the
-                      EXACT same slot as the bet-slip pill above (same
-                      px-4/pb-2/pt-2 padding as ButtonPreviewMomios's own root,
-                      same z-10 stacking, same bottom-anchored container) so it
-                      never introduces a new position or extra layout height.
-                      Fed real OneClickBetSession data whenever a hold is
-                      actually in progress (see ocbPillState/ocbOdds/etc.
-                      above); falls back to the `?debug=true` preview
-                      controls otherwise. Still pointer-events-none — no
-                      tap/hold handlers live on the pill itself, the gesture
-                      is bound to the pick buttons via `bindPick`. */}
+                      EXACT same slot as the play button above (same
+                      px-4/pb-2/pt-2 padding, same z-10 stacking, same
+                      bottom-anchored container) so it never introduces a new
+                      position or extra layout height. Fed real
+                      OneClickBetSession data whenever a hold is actually in
+                      progress (see ocbPillState/ocbOdds/etc. above); falls
+                      back to the `?debug=true` preview controls otherwise.
+                      Still pointer-events-none — no tap/hold handlers live on
+                      the pill itself, the gesture is bound to the pick
+                      buttons via `bindPick`. */}
                   {oneClickBetPillVisible && (
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 w-full px-4 pb-2 pt-2">
                       <OneClickBetPill
@@ -920,31 +1039,13 @@ export function App() {
               </div>
             </div>
 
-            {/* Full-screen "Resumen de tu entrada" sheet — opens by tapping
-                the collapsed pill at any selection count; swipe down or ×
-                closes it. */}
-            <AnimatePresence>
-              {listOpen && selections.length > 0 && (
-                <BetSlipFullSheet
-                  key="bet-slip-full-sheet"
-                  selections={selections}
-                  onRemove={removeSelection}
-                  onClearAll={() => {
-                    setSelections([]);
-                    setListOpen(false);
-                  }}
-                  onClose={() => setListOpen(false)}
-                  onConfirm={confirmBet}
-                />
-              )}
-            </AnimatePresence>
-
-            {/* Swipe-to-confirm success — green "Entrada creada" card that
-                flies into Mis entradas, then finishEntryCreated() pops the
-                count badge. Also resets the OneClickBetSession
-                (cancelOcbSession) so any lingering hold state is cleared —
-                a no-op in practice, since a hold never sets `success`
-                itself (see betSlipVisible's comment). */}
+            {/* Success — green "Entrada creada" card that flies into Mis
+                entradas, then finishEntryCreated() pops the count badge,
+                marks the contest "Participando", and returns to the feed.
+                Also resets the OneClickBetSession (cancelOcbSession) so any
+                lingering hold state is cleared — a no-op in practice, since
+                a hold never sets `success` itself (see
+                contestPlayButtonVisible's comment). */}
             {success && (
               <EntryCreatedOverlay
                 onCatch={() => setEntryBump((n) => n + 1)}
@@ -955,10 +1056,27 @@ export function App() {
               />
             )}
 
+            {/* Contest entry detail — read-only sheet for one of the
+                player's own entries, opened by tapping it on the
+                leaderboard screen (see ContestLeaderboard). Closing it
+                (× or swipe-down) just clears `selectedEntryId`, returning
+                to the same leaderboard scroll position underneath. */}
+            <AnimatePresence>
+              {selectedEntry && activeContest && (
+                <ContestEntrySheet
+                  key={selectedEntry.id}
+                  entry={selectedEntry}
+                  entryIndex={selectedEntryIndex}
+                  contest={activeContest}
+                  onClose={() => setSelectedEntryId(null)}
+                />
+              )}
+            </AnimatePresence>
+
             {/* Quick Bet onboarding — first-visit info sheet for the
                 long-press gesture (see the auto-open effect above). Mounted
-                at the same level as BetSlipFullSheet/EntryCreatedOverlay so
-                it shares the phone-frame's clipping bounds and z-stack. */}
+                at the same level as EntryCreatedOverlay so it shares the
+                phone-frame's clipping bounds and z-stack. */}
             <AnimatePresence>
               {onboardingOpen && (
                 <OnboardingSheet

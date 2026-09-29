@@ -16,6 +16,11 @@ import {
   getSlipEntryValues,
 } from './buttonProgressionConfig';
 import { ButtonPreviewMomios } from './ButtonPreviewMomios';
+import {
+  canConfirmContestEntry,
+  getContestEntryValues,
+  type Contest,
+} from './contests';
 import { SwipeToConfirm } from './SwipeToConfirm';
 import type { Selection } from './types';
 
@@ -120,6 +125,9 @@ type Props = {
   onKeepAlive: () => void;
   /** Parlay "Lista" tab — opens the full-screen summary sheet. */
   onOpenList: () => void;
+  /** Active contest, if any — its fixed entry/winnings and selection range
+      REPLACE the global count-based `slipEntry` table (see contests.ts). */
+  contest?: Contest | null;
 };
 
 export function BetSlipSheet({
@@ -132,13 +140,19 @@ export function BetSlipSheet({
   onConfirm,
   onKeepAlive,
   onOpenList,
+  contest = null,
 }: Props) {
-  // Entry amount + potential winnings come from the centralized
-  // selection-count config, not from odds (see buttonProgressionConfig's
-  // `slipEntry`). Below `minSelections` both are 0 and confirmation is
-  // disabled — the same rule the pill and the "Resumen" full sheet apply.
-  const { amount, potentialWin } = getSlipEntryValues(selections.length);
-  const canConfirm = canConfirmEntry(selections.length);
+  // Entry amount + potential winnings come from the active contest when one
+  // is set, otherwise the centralized selection-count config (not from odds
+  // — see buttonProgressionConfig's `slipEntry`). Below the applicable
+  // minimum both are 0/disabled — the same rule the pill and the "Resumen"
+  // full sheet apply.
+  const { amount, potentialWin } = contest
+    ? getContestEntryValues(contest)
+    : getSlipEntryValues(selections.length);
+  const canConfirm = contest
+    ? canConfirmContestEntry(contest, selections.length)
+    : canConfirmEntry(selections.length);
   // Summarized slip shows AT MOST 2 selections (latest first). Once a 3rd is
   // added the slip auto-collapses (App.tsx), so the expanded card only ever
   // renders 1 or 2 rows. 1 selection keeps its existing single-row layout;
@@ -420,6 +434,7 @@ export function BetSlipSheet({
             cumulativeOdds={cumulativeOdds}
             speedScale={1}
             tier3OddsEffect={buttonProgressionConfig.tier3OddsEffect}
+            contest={contest}
           />
         </motion.div>
 
@@ -573,7 +588,9 @@ export function BetSlipSheet({
               collapses this content). */}
           {!canConfirm && (
             <p className="px-[10px] pt-2 text-center text-[12px] font-medium leading-4 text-[rgba(251,251,251,0.5)]">
-              Agrega al menos 2 selecciones para crear tu apuesta.
+              {contest
+                ? `Agrega al menos ${contest.minSelections} selecciones para entrar al concurso.`
+                : 'Agrega al menos 2 selecciones para crear tu apuesta.'}
             </p>
           )}
 

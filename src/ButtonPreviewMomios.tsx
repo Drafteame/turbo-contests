@@ -26,6 +26,11 @@ import {
   getNextSlipEntryValues,
   getSlipEntryValues,
 } from './buttonProgressionConfig';
+import {
+  canConfirmContestEntry,
+  getContestEntryValues,
+  type Contest,
+} from './contests';
 import { OutlineRipple } from './OutlineRipple';
 import { playSound } from './playSound';
 import { SlotNumber } from './SlotNumber';
@@ -64,6 +69,9 @@ type Props = {
   onLiveState?: (s: ButtonLiveState) => void;
   /** PASS 3 — Tier 3 odds effect variant. Default 'flames'. */
   tier3OddsEffect?: 'flames' | 'smoke';
+  /** Active contest, if any — its fixed entry/winnings and selection range
+      REPLACE the global count-based `slipEntry` table (see contests.ts). */
+  contest?: Contest | null;
 };
 
 export function ButtonPreviewMomios({
@@ -72,6 +80,7 @@ export function ButtonPreviewMomios({
   speedScale = 1,
   onLiveState,
   tier3OddsEffect = cfg.tier3OddsEffect,
+  contest = null,
 }: Props) {
   // MASTER SWITCH — when `cfg.animationsEnabled` is false, treat the button
   // as reduced-motion. This reuses every existing `!reduced` gate to suppress
@@ -1026,15 +1035,19 @@ export function ButtonPreviewMomios({
   // selection-count config (buttonProgressionConfig.slipEntry) — NOT
   // derived from odds. Odds are no longer displayed on the pill at all.
   const { amount: entryAmount, potentialWin: entryPotentialWin } = useMemo(
-    () => getSlipEntryValues(selectionCount),
-    [selectionCount],
+    () =>
+      contest ? getContestEntryValues(contest) : getSlipEntryValues(selectionCount),
+    [contest, selectionCount],
   );
-  // Next step's fixed values, for the "next step" tooltip.
+  // Next step's fixed values, for the "next step" tooltip. Doesn't apply to a
+  // contest — its amount/winnings are fixed regardless of selection count.
   const nextEntry = useMemo(
-    () => getNextSlipEntryValues(selectionCount),
-    [selectionCount],
+    () => (contest ? null : getNextSlipEntryValues(selectionCount)),
+    [contest, selectionCount],
   );
-  const ctaDisabled = !canConfirmEntry(selectionCount);
+  const ctaDisabled = contest
+    ? !canConfirmContestEntry(contest, selectionCount)
+    : !canConfirmEntry(selectionCount);
 
   /* =============================================================== */
   /*  Inner CTA press handler — placeholder                          */
@@ -1494,7 +1507,11 @@ export function ButtonPreviewMomios({
                       color: '#fbfbfb',
                     }}
                   >
-                    {selectionCount === 0 ? 'Haz mín. 2 selec.' : 'Haz 1 selección'}
+                    {contest
+                      ? `Elige mín. ${contest.minSelections} selec.`
+                      : selectionCount === 0
+                        ? 'Haz mín. 2 selec.'
+                        : 'Haz 1 selección'}
                   </p>
                 </div>
               ) : (

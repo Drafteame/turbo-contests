@@ -35,6 +35,9 @@ type Props = {
   /** When true, the thumb can't be dragged and confirming is blocked
    *  (e.g. below the slip's 2-selection minimum). Dims the track. */
   disabled?: boolean;
+  /** Override the track caption (default "Desliza para jugar por: $X") —
+   *  e.g. a contest flow's "Desliza para entrar al concurso por $X". */
+  label?: string;
 };
 
 export function SwipeToConfirm({
@@ -43,6 +46,7 @@ export function SwipeToConfirm({
   onSwipeStart,
   heightPx = 40,
   disabled = false,
+  label,
 }: Props) {
   // Thumb x → purple fill that grows across the track. The drag is constrained
   // by the track element itself, so the confirm gate is "thumb reached the far
@@ -122,7 +126,7 @@ export function SwipeToConfirm({
         type="button"
         disabled={disabled}
         aria-label={
-          confirming ? 'Creando entrada' : `Desliza para jugar por $${stake}`
+          confirming ? 'Creando entrada' : label ?? `Desliza para jugar por $${stake}`
         }
         className="absolute left-[2px] top-[2px] z-10 flex w-12 items-center justify-center rounded-full"
         style={{ x: swipeX, height: inner, backgroundImage: PURPLE_CTA }}
@@ -148,7 +152,7 @@ export function SwipeToConfirm({
         )}
       </motion.button>
       <p className="w-full text-center text-[13px] font-medium leading-4 text-[rgba(251,251,251,0.7)]">
-        Desliza para jugar por: ${stake}
+        {label ?? `Desliza para jugar por: $${stake}`}
       </p>
     </div>
   );

@@ -20,6 +20,11 @@ import {
   getNextSlipEntryValues,
   getSlipEntryValues,
 } from './buttonProgressionConfig';
+import {
+  canConfirmContestEntry,
+  getContestEntryValues,
+  type Contest,
+} from './contests';
 import { SwipeToConfirm } from './SwipeToConfirm';
 import type { Selection } from './types';
 
@@ -97,6 +102,9 @@ type Props = {
   onClose: () => void;
   /** Swipe-to-play — places the bet. */
   onConfirm: () => void;
+  /** Active contest, if any — its fixed entry/winnings and selection range
+      REPLACE the global count-based `slipEntry` table (see contests.ts). */
+  contest?: Contest | null;
 };
 
 export function BetSlipFullSheet({
@@ -105,13 +113,20 @@ export function BetSlipFullSheet({
   onClearAll,
   onClose,
   onConfirm,
+  contest = null,
 }: Props) {
-  // Entry amount + potential winnings — centralized selection-count config,
-  // not derived from odds (see buttonProgressionConfig's `slipEntry`).
-  const { amount, potentialWin } = getSlipEntryValues(selections.length);
-  const canConfirm = canConfirmEntry(selections.length);
+  // Entry amount + potential winnings — the active contest's fixed values
+  // when one is set, otherwise the centralized selection-count config (not
+  // derived from odds — see buttonProgressionConfig's `slipEntry`).
+  const { amount, potentialWin } = contest
+    ? getContestEntryValues(contest)
+    : getSlipEntryValues(selections.length);
+  const canConfirm = contest
+    ? canConfirmContestEntry(contest, selections.length)
+    : canConfirmEntry(selections.length);
   // Next step's fixed values, for the next-step caption below the stat bar.
-  const nextEntry = getNextSlipEntryValues(selections.length);
+  // Doesn't apply to a contest — its amount/winnings never change with count.
+  const nextEntry = contest ? null : getNextSlipEntryValues(selections.length);
   const orderedSelections = [...selections].reverse(); // latest first
 
   // SHAPE MORPH — the card grows out of the slip footprint on open and shrinks
@@ -454,15 +469,26 @@ export function BetSlipFullSheet({
             </div>
           </div>
 
-          {/* Next-step caption. Hidden once there's no next step (already at
-              `maxSelections`) or below the minimum (nothing to "add one
-              more" from yet — that's what the empty/1 state copy already
-              covers). */}
-          {canConfirm && nextEntry && (
+          {/* Contest mode — the amount/winnings are fixed for the whole
+              contest (not per selection count), so instead of a "next step"
+              caption this states the contest's own fixed range. */}
+          {contest ? (
             <p className="-mt-1 text-center text-[12px] font-medium leading-4 text-[rgba(251,251,251,0.6)]">
-              🔒 Fijo para {selections.length} selecciones — agrega 1 más → $
-              {nextEntry.amount} · gana ${nextEntry.potentialWin}
+              🔒 Entrada fija de ${contest.entryCost} · elige de{' '}
+              {contest.minSelections} a {contest.maxSelections} selecciones
             </p>
+          ) : (
+            /* Next-step caption. Hidden once there's no next step (already at
+                `maxSelections`) or below the minimum (nothing to "add one
+                more" from yet — that's what the empty/1 state copy already
+                covers). */
+            canConfirm &&
+            nextEntry && (
+              <p className="-mt-1 text-center text-[12px] font-medium leading-4 text-[rgba(251,251,251,0.6)]">
+                🔒 Fijo para {selections.length} selecciones — agrega 1 más → $
+                {nextEntry.amount} · gana ${nextEntry.potentialWin}
+              </p>
+            )
           )}
 
           {/* Promos — free bet + Booster. Toggles are CSS controls; the
@@ -548,7 +574,9 @@ export function BetSlipFullSheet({
               opened at exactly 1 selection (tapping the pill). */}
           {!canConfirm && (
             <p className="px-3.5 text-center text-[13px] font-medium leading-4 text-[rgba(251,251,251,0.5)]">
-              Agrega al menos 2 selecciones para crear tu apuesta.
+              {contest
+                ? `Agrega al menos ${contest.minSelections} selecciones para entrar al concurso.`
+                : 'Agrega al menos 2 selecciones para crear tu apuesta.'}
             </p>
           )}
 
@@ -570,6 +598,7 @@ export function BetSlipFullSheet({
               onConfirm={onConfirm}
               heightPx={44}
               disabled={!canConfirm}
+              label={contest ? `Entrar al concurso por $${amount}` : undefined}
             />
           </div>
         </div>

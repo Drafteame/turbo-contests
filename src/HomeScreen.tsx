@@ -1,9 +1,11 @@
 import { memo, useEffect, useRef, useState } from 'react';
+import type { Contest } from './contests';
 import type { BindPick } from './oneClickBetSession';
 import arrowNarrowDownIcon from './assets/arrow-narrow-down.svg';
 import arrowNarrowUpIcon from './assets/arrow-narrow-up.svg';
 import betsIcon from './assets/bets.svg';
 import chevronIcon from './assets/chevron.svg';
+import chevronRightIcon from './assets/chevron_right.svg';
 import gamingIcon from './assets/gaming.svg';
 import logoDrafteaIcon from './assets/logo-draftea.svg';
 import misEntradasIcon from './assets/mis_entradas.svg';
@@ -152,22 +154,58 @@ export const MOCK_PICKS: Selection[] = [
 /* ============================================================ */
 /*  Header — Draftea logo, balance, lightning, profile          */
 /* ============================================================ */
-function Header() {
+export function Header({
+  onBack,
+  title,
+}: {
+  /** Present only on the player-selection screen (opened from a contest
+      card) — swaps the Draftea logo for a back-to-feed button + the
+      active contest's name. Omit to show the plain feed-screen header. */
+  onBack?: () => void;
+  title?: string;
+}) {
   // Figma "header" node 1665:42931. Three regions:
-  //   • Left: Draftea wordmark logo (110×24).
+  //   • Left: Draftea wordmark logo (110×24) — or, when `onBack` is given,
+  //     a back button + the active contest name.
   //   • Right gap-2:
   //     - Balance pair: "$0.00" + "BALANCE" stacked right-aligned,
   //       then a 32×32 purple-gradient circle with the + icon.
   //     - 36×36 circular user button on rgba(251,251,251,0.12) bg.
   return (
     <div className="flex w-full items-center justify-between px-3 py-1">
-      {/* Left — Draftea logo */}
-      <div className="flex flex-1 items-center">
-        <img
-          src={logoDrafteaIcon}
-          alt="Draftea"
-          className="h-6"
-        />
+      {/* Left — Draftea logo, or back-to-feed + contest name */}
+      <div className="flex flex-1 items-center gap-2 overflow-hidden">
+        {onBack ? (
+          <>
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Volver a contests"
+              className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-[56px] bg-[rgba(251,251,251,0.12)] active:scale-[0.95] transition-transform"
+            >
+              <img
+                src={chevronRightIcon}
+                alt=""
+                aria-hidden
+                className="h-[18px] w-[18px] rotate-180"
+              />
+            </button>
+            {title && (
+              <span
+                className="truncate text-[14px] font-bold leading-[21px] text-[#fbfbfb]"
+                style={{ fontFamily: 'Red Hat Display, sans-serif' }}
+              >
+                {title}
+              </span>
+            )}
+          </>
+        ) : (
+          <img
+            src={logoDrafteaIcon}
+            alt="Draftea"
+            className="h-6"
+          />
+        )}
       </div>
 
       {/* Right — balance + plus button + user button */}
@@ -902,6 +940,20 @@ type HomeScreenChromeProps = {
   /** Scroll-direction signal (shared with the navbar): true while scrolling
       DOWN → collapse the leagues row; false on scroll-up / near-top → reveal. */
   headerCollapsed?: boolean;
+  /** Back-to-feed handler — present whenever this screen was opened from a
+      contest card (see App.tsx). Passed straight to Header. */
+  onBack?: () => void;
+  /** Active contest's name, shown next to the back button. */
+  activeContestName?: string;
+  /** Active contest, if any — shown as a compact, always-visible info bar
+      (entry cost, winnings, allowed selection range) pinned just below the
+      header, plus a live "N/max elegidas" readout. */
+  activeContest?: Contest | null;
+  /** Current draft selection count, for the info bar's live readout. */
+  selectionCount?: number;
+  /** In-context explanation shown when a selection was blocked because the
+      active contest's maximum was reached (see App.tsx's togglePick). */
+  contestLimitNotice?: string | null;
 };
 
 function HomeScreenChromeImpl({
@@ -910,6 +962,11 @@ function HomeScreenChromeImpl({
   bindPick,
   cancelActivePress,
   headerCollapsed = false,
+  onBack,
+  activeContestName,
+  activeContest,
+  selectionCount = 0,
+  contestLimitNotice,
 }: HomeScreenChromeProps) {
   // Two-tier sticky header: the topbar (status + logo/balance) pins at the
   // very top; the leagues row + match tabs + pill markets pin just below it
@@ -941,7 +998,75 @@ function HomeScreenChromeImpl({
             opacity: 0.48,
           }}
         />
-        <Header />
+        <Header onBack={onBack} title={activeContestName} />
+
+        {/* CONTEST CONTEXT BAR — always visible (part of the pinned topbar,
+            so it's measured into `topbarH` and the stack below never
+            overlaps it) right below the header. High-contrast (white text,
+            not the app's usual muted secondary grays) so the current count
+            and required range read at a glance while drafting — this is the
+            ONLY place that communicates "N more needed" below the minimum,
+            since there's no separate bet-slip/review surface to say it
+            anymore (see the "Contest draft/review flow" landmark). Fixed
+            entry cost/winnings sit alongside it, reusing the feed card's
+            gradient-accent surface language. */}
+        {activeContest && (
+          <div
+            className="border-t border-[rgba(251,251,251,0.1)] px-3 py-3"
+            style={{
+              backgroundImage:
+                'linear-gradient(180deg, rgba(75,32,255,0.14) 0%, rgba(0,0,0,0) 100%)',
+            }}
+          >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-px flex-1 flex-col">
+              {/* Count vs. range — the primary, high-contrast readout. */}
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[24px] font-black italic leading-[28px] text-[#fbfbfb]">
+                  {selectionCount}
+                </span>
+                <span className="text-[15px] font-bold leading-5 text-[#fbfbfb]">
+                  / {activeContest.maxSelections} elegidas
+                </span>
+              </div>
+              {/* Contextual status — communicates exactly how many more are
+                  needed below the minimum; a confirmation once playable;
+                  the max explicitly once reached (further adds are already
+                  refused by togglePick — this just states it). */}
+              <span className="mt-0.5 text-[13px] font-bold leading-[18px] text-[#fbfbfb]">
+                {selectionCount < activeContest.minSelections
+                  ? `Elige ${activeContest.minSelections - selectionCount} más para jugar (mín. ${activeContest.minSelections})`
+                  : selectionCount >= activeContest.maxSelections
+                    ? `Máximo alcanzado · rango ${activeContest.minSelections}-${activeContest.maxSelections}`
+                    : `Ya puedes jugar · rango ${activeContest.minSelections}-${activeContest.maxSelections}`}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-4">
+              <div className="flex flex-col items-end">
+                <span className="text-[16px] font-black leading-[22px] text-[#fbfbfb]">
+                  ${activeContest.entryCost}
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-[rgba(251,251,251,0.6)]">
+                  Entrada
+                </span>
+              </div>
+              <div className="flex flex-col items-end">
+                <span className="text-[16px] font-black leading-[22px] text-[#fbbf24]">
+                  ${activeContest.potentialWinnings}
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-[rgba(251,251,251,0.6)]">
+                  Premio
+                </span>
+              </div>
+            </div>
+          </div>
+          {contestLimitNotice && (
+            <p className="mt-1.5 text-[12px] font-bold text-[#ff9b9b]">
+              {contestLimitNotice}
+            </p>
+          )}
+          </div>
+        )}
       </div>
 
       {/* PINNED HEADER STACK — leagues row + match tabs + pill markets,
